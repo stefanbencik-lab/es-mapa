@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parcela – mapa</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html, body, #map { height: 100%; margin: 0; }
+  .lbl { background: rgba(0,0,0,.65); color: #fff; border: 0; border-radius: 3px;
+         font: 600 12px/1.2 system-ui, sans-serif; padding: 2px 6px; box-shadow: none; }
+  .lbl::before { display: none; }
+  #err { position: absolute; z-index: 999; inset: 0; display: none; place-items: center;
+         font: 14px system-ui, sans-serif; color: #333; background: #f3f3f3; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="err">Parcela nemá zakreslené hranice.</div>
+<script>
+/* Vstup: URL hash = encodeURIComponent(JSON)
+   JSON = GeoJSON Feature | FeatureCollection | Geometry (Polygon, MultiPolygon, LineString)
+   Voliteľné properties: kod, nazov, ha, color
+   Príklad: parcela-map.html#%7B%22type%22%3A%22Feature%22...%7D                     */
+const g = doo.model.geojson?.value;
+const {
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {},
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.2742177,
+            48.0073773
+          ],
+          [
+            18.2756637,
+            48.0083672
+          ],
+          [
+            18.2773048,
+            48.0068328
+          ],
+          [
+            18.2756974,
+            48.0059913
+          ],
+          [
+            18.2742177,
+            48.0073818
+          ]
+        ]
+      }
+    }
+  ]
+},
+};
+const src = 'https://<tvoj-host>/parcela-map.html#' + encodeURIComponent(JSON.stringify(feature));
+// ďalej rovnako ako dnes – len namiesto OSM URL vlož `src` do iframe
+const ortofoto = L.tileLayer(
+  'https://zbgis.skgeodesy.sk/zbgis/rest/services/Ortofoto/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom: 21, maxNativeZoom: 19, attribution: 'Ortofoto © GKÚ, NLC (CC BY 4.0)' });
+const esri = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom: 21, maxNativeZoom: 18, attribution: 'Imagery © Esri, Maxar, Earthstar Geographics' });
+const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  { maxZoom: 19, attribution: '© OpenStreetMap' });
+
+const map = L.map('map', { layers: [ortofoto], zoomControl: true, attributionControl: true });
+L.control.layers({ 'Ortofoto SR': ortofoto, 'Satelit Esri': esri, 'Mapa OSM': osm },
+                 null, { collapsed: true }).addTo(map);
+L.control.scale({ imperial: false }).addTo(map);
+
+// ak štátne ortofoto neodpovedá, prepni na Esri
+let failed = 0;
+ortofoto.on('tileerror', () => {
+  if (++failed === 4 && map.hasLayer(ortofoto)) { map.removeLayer(ortofoto); esri.addTo(map); }
+});
+
+function closeRing(g) {            // LineString z geojson.io -> Polygon
+  if (g.type !== 'LineString') return g;
+  const c = g.coordinates.slice(), a = c[0], b = c[c.length - 1];
+  if (a[0] !== b[0] || a[1] !== b[1]) c.push(a);
+  return { type: 'Polygon', coordinates: [c] };
+}
+function normalize(j) {
+  if (j.type === 'FeatureCollection') return { ...j, features: j.features.map(normalize) };
+  if (j.type === 'Feature') return { ...j, geometry: closeRing(j.geometry) };
+  return { type: 'Feature', properties: {}, geometry: closeRing(j) };
+}
+
+try {
+  const raw = decodeURIComponent(location.hash.slice(1));
+  if (!raw) throw new Error('empty');
+  const layer = L.geoJSON(normalize(JSON.parse(raw)), {
+    style: f => ({ color: (f.properties && f.properties.color) || '#ffd400',
+                   weight: 3, fillOpacity: 0.12 }),
+    onEachFeature: (f, l) => {
+      const p = f.properties || {};
+      const t = [p.kod, p.nazov].filter(Boolean).join(' · ') + (p.ha ? ` · ${p.ha} ha` : '');
+      if (t.trim()) l.bindTooltip(t, { permanent: true, direction: 'center', className: 'lbl' });
+    }
+  }).addTo(map);
+  map.fitBounds(layer.getBounds(), { padding: [24, 24] });
+} catch (e) {
+  document.getElementById('err').style.display = 'grid';
+  map.setView([47.985, 18.28], 12);
+}
+</script>
+</body>
+</html>
