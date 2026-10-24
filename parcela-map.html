@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Parcela – mapa</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
   html, body, #map { height: 100%; margin: 0; }
   .lbl { background: rgba(0,0,0,.65); color: #fff; border: 0; border-radius: 3px;
@@ -19,48 +19,16 @@
 <div id="map"></div>
 <div id="err">Parcela nemá zakreslené hranice.</div>
 <script>
+if (typeof L === 'undefined') {
+  document.getElementById('err').textContent = 'Nepodarilo sa načítať mapovú knižnicu (Leaflet). Skontroluj internet alebo blokovanie cdnjs.cloudflare.com.';
+  document.getElementById('err').style.display = 'grid';
+  throw new Error('Leaflet not loaded');
+}
 /* Vstup: URL hash = encodeURIComponent(JSON)
    JSON = GeoJSON Feature | FeatureCollection | Geometry (Polygon, MultiPolygon, LineString)
    Voliteľné properties: kod, nazov, ha, color
    Príklad: parcela-map.html#%7B%22type%22%3A%22Feature%22...%7D                     */
-const g = doo.model.geojson?.value;
-const {
-  "type": "FeatureCollection",
-  "features": [
-    {
-      "type": "Feature",
-      "properties": {},
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            18.2742177,
-            48.0073773
-          ],
-          [
-            18.2756637,
-            48.0083672
-          ],
-          [
-            18.2773048,
-            48.0068328
-          ],
-          [
-            18.2756974,
-            48.0059913
-          ],
-          [
-            18.2742177,
-            48.0073818
-          ]
-        ]
-      }
-    }
-  ]
-},
-};
-const src = 'https://<tvoj-host>/parcela-map.html#' + encodeURIComponent(JSON.stringify(feature));
-// ďalej rovnako ako dnes – len namiesto OSM URL vlož `src` do iframe
+
 const ortofoto = L.tileLayer(
   'https://zbgis.skgeodesy.sk/zbgis/rest/services/Ortofoto/MapServer/tile/{z}/{y}/{x}',
   { maxZoom: 21, maxNativeZoom: 19, attribution: 'Ortofoto © GKÚ, NLC (CC BY 4.0)' });
@@ -105,7 +73,9 @@ try {
       if (t.trim()) l.bindTooltip(t, { permanent: true, direction: 'center', className: 'lbl' });
     }
   }).addTo(map);
-  map.fitBounds(layer.getBounds(), { padding: [24, 24] });
+  const b = layer.getBounds();
+  if (b.getNorthEast().equals(b.getSouthWest())) map.setView(b.getCenter(), 16); // len bod z GPS
+  else map.fitBounds(b, { padding: [24, 24] });
 } catch (e) {
   document.getElementById('err').style.display = 'grid';
   map.setView([47.985, 18.28], 12);
