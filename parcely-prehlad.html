@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parcely – prehľad</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root { --bg:#fff; --fg:#1e293b; --mut:#64748b; --line:#e2e8f0; --acc:#1d4ed8; --hi:#fde68a; }
+  html, body { height:100%; margin:0; font:14px/1.4 system-ui,sans-serif; color:var(--fg); background:var(--bg); }
+  #app { display:grid; grid-template-columns: 300px 1fr; height:100%; }
+  #side { border-right:1px solid var(--line); display:flex; flex-direction:column; min-width:0; }
+  #map { min-height:0; }
+  #top { padding:10px 12px; border-bottom:1px solid var(--line); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  #top strong { flex:1; }
+  select { font:inherit; padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--fg); }
+  #list { overflow:auto; flex:1; }
+  .row { display:grid; grid-template-columns: 1fr auto; gap:2px 10px; padding:8px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .row:hover, .row.on { background:#f1f5f9; }
+  .row .k { font-weight:600; } .row .s { color:var(--mut); font-size:12px; grid-column:1/-1; }
+  .row .v { text-align:right; font-variant-numeric:tabular-nums; }
+  #det { border-top:1px solid var(--line); padding:10px 12px; font-size:13px; max-height:38%; overflow:auto; }
+  #det h3 { margin:0 0 6px; font-size:15px; }
+  #det table { border-collapse:collapse; width:100%; }
+  #det td { padding:2px 0; vertical-align:top; } #det td:first-child { color:var(--mut); width:46%; }
+  #det a { color:var(--acc); }
+  #sum { padding:8px 12px; border-top:1px solid var(--line); color:var(--mut); font-size:12px; }
+  .lbl { background:rgba(0,0,0,.6); color:#fff; border:0; border-radius:3px; font:600 11px/1.2 system-ui; padding:2px 5px; box-shadow:none; white-space:nowrap; }
+  .lbl::before { display:none; }
+  .leg { background:rgba(255,255,255,.92); padding:6px 8px; border-radius:6px; font-size:11px; line-height:1.3; box-shadow:0 1px 4px rgba(0,0,0,.2); }
+  .leg i { display:inline-block; width:12px; height:12px; vertical-align:-2px; margin-right:4px; border:1px solid rgba(0,0,0,.3); }
+  @media (max-width:700px) { #app { grid-template-columns:1fr; grid-template-rows:1fr 45%; } #side { order:2; border-right:0; border-top:1px solid var(--line); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <div id="top"><strong>Parcely</strong>
+      <select id="metric">
+        <option value="ha">farba: výmera</option>
+        <option value="hodHa">farba: hodiny / ha (sezóna)</option>
+        <option value="dni">farba: dni od poslednej práce</option>
+        <option value="lok">farba: lokalita</option>
+      </select>
+    </div>
+    <div id="list"></div>
+    <div id="det"><span style="color:var(--mut)">Klikni na parcelu v zozname alebo na mape.</span></div>
+    <div id="sum"></div>
+  </div>
+  <div id="map"></div>
+</div>
+<script>
+if (typeof L === 'undefined') { document.body.innerHTML = '<p style="padding:20px">Nepodarilo sa načítať Leaflet (cdnjs.cloudflare.com).</p>'; throw new Error('no leaflet'); }
+
+/* ---------- vstupné dáta ----------
+   Z Tabidoo: window.postMessage({ type:'parcely', features:[...] }, '*')  (viď tabidoo_parcely_prehlad_init.ts)
+   Alebo URL hash: #<encodeURIComponent(JSON.stringify({features:[...]}))>
+   Feature.properties (všetko voliteľné okrem geometry):
+     id, kod, nazov, lokalita, ha, plodina, sezona,
+     hodinySezona, hodiny30, zaznamov, poslednaPraca (YYYY-MM-DD), poslednyDruh, url
+   Bez dát zobrazí vstavaný stav z 24. 10. 2026 (9 polygónov, len Čaj 3 má kód). */
+const DEFAULT = {features:[
+ {type:'Feature',properties:{id:'d1',kod:'',nazov:'Čajkova – blok bez kódu (SV)',lokalita:'Čajkova',ha:7.44},geometry:{type:'Polygon',coordinates:[[[18.262585,47.962189],[18.261802,47.961545],[18.2696,47.957885],[18.270419,47.958755],[18.262639,47.962225],[18.262585,47.962189]]]}},
+ {type:'Feature',properties:{id:'d2',kod:'103',nazov:'Čaj 3',lokalita:'Čajkova',ha:13.46},geometry:{type:'Polygon',coordinates:[[[18.2622729,47.9592935],[18.2614123,47.958429],[18.2618426,47.9580928],[18.2616992,47.9577246],[18.2613166,47.9569401],[18.2665045,47.9545065],[18.268417,47.9564758],[18.2622729,47.9592935]]]}},
+ {type:'Feature',properties:{id:'d3',kod:'',nazov:'Čajkova – blok bez kódu (Z)',lokalita:'Čajkova',ha:8.55},geometry:{type:'Polygon',coordinates:[[[18.257515,47.964554],[18.255347,47.962522],[18.259057,47.960834],[18.259763,47.961475],[18.259471,47.961631],[18.259884,47.961995],[18.259713,47.962103],[18.260691,47.963129],[18.257515,47.964554]]]}},
+ {type:'Feature',properties:{id:'d4',kod:'',nazov:'Čajkova – 1,04 ha',lokalita:'Čajkova',ha:1.04},geometry:{type:'Polygon',coordinates:[[[18.259843,47.960372],[18.259462,47.960035],[18.26176,47.958961],[18.262222,47.959316],[18.259843,47.960372]]]}},
+ {type:'Feature',properties:{id:'d5',kod:'',nazov:'Čajkova – 1,62 ha',lokalita:'Čajkova',ha:1.62},geometry:{type:'Polygon',coordinates:[[[18.258306,47.958824],[18.260291,47.95795],[18.2604,47.957641],[18.261461,47.957186],[18.261175,47.956876],[18.257817,47.958369],[18.258306,47.958824]]]}},
+ {type:'Feature',properties:{id:'d6',kod:'',nazov:'Nový sad – J',lokalita:'Nový sad',ha:4.09},geometry:{type:'Polygon',coordinates:[[[18.275529,48.006092],[18.277224,48.006906],[18.279054,48.005132],[18.2779,48.003914],[18.275529,48.006092]]]}},
+ {type:'Feature',properties:{id:'d7',kod:'',nazov:'Nový sad – stred',lokalita:'Nový sad',ha:2.95},geometry:{type:'Polygon',coordinates:[[[18.277224,48.006846],[18.275646,48.006007],[18.27423,48.007335],[18.275684,48.008385],[18.277224,48.006846]]]}},
+ {type:'Feature',properties:{id:'d8',kod:'',nazov:'Nový sad – V',lokalita:'Nový sad',ha:16.78},geometry:{type:'Polygon',coordinates:[[[18.275709,48.008385],[18.279064,48.005142],[18.282028,48.007476],[18.27873,48.010643],[18.276816,48.01066],[18.275154,48.009531],[18.276186,48.008807],[18.275709,48.008385]]]}},
+ {type:'Feature',properties:{id:'d9',kod:'',nazov:'Nový sad – samostatný',lokalita:'Nový sad',ha:3.92},geometry:{type:'Polygon',coordinates:[[[18.288655,48.004752],[18.287353,48.004127],[18.290114,48.001673],[18.29131,48.00228],[18.288655,48.004752]]]}}
+]};
+
+/* ---------- mapa ---------- */
+const orto = L.tileLayer('https://zbgis.skgeodesy.sk/zbgis/rest/services/Ortofoto/MapServer/tile/{z}/{y}/{x}',{maxZoom:21,maxNativeZoom:19,attribution:'Ortofoto © GKÚ, NLC (CC BY 4.0)'});
+const esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:21,maxNativeZoom:18,attribution:'© Esri, Maxar'});
+const osm  = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'});
+const map = L.map('map',{layers:[orto]});
+L.control.layers({'Ortofoto SR':orto,'Satelit Esri':esri,'Mapa OSM':osm},null,{collapsed:true}).addTo(map);
+L.control.scale({imperial:false}).addTo(map);
+let fails=0; orto.on('tileerror',()=>{ if(++fails===4&&map.hasLayer(orto)){map.removeLayer(orto);esri.addTo(map);} });
+const legend = L.control({position:'bottomleft'}); legend.onAdd=()=>{const d=L.DomUtil.create('div','leg');d.id='leg';return d;}; legend.addTo(map);
+
+/* ---------- stav ---------- */
+let feats=[], layer=null, sel=null, metric='ha';
+const $=id=>document.getElementById(id);
+const num=(v,d=1)=>(v==null||v===''||isNaN(+v))?'–':(+v).toLocaleString('sk-SK',{maximumFractionDigits:d});
+const days=iso=>{ if(!iso) return null; const t=Date.parse(iso); return isNaN(t)?null:Math.floor((Date.now()-t)/864e5); };
+const LOK=['#2563eb','#16a34a','#d97706','#9333ea','#dc2626','#0891b2'];
+const lokColor={};
+function ramp(t){ t=Math.max(0,Math.min(1,t)); const a=[254,243,199],b=[180,83,9]; return `rgb(${a.map((x,i)=>Math.round(x+(b[i]-x)*t)).join(',')})`; }
+
+function val(p){ // hodnota pre farbu
+  if(metric==='ha') return +p.ha||0;
+  if(metric==='hodHa') return (p.hodinySezona!=null&&p.ha)?p.hodinySezona/p.ha:null;
+  if(metric==='dni') return days(p.poslednaPraca);
+  return null;
+}
+function colorOf(p,min,max){
+  if(metric==='lok'){ const k=p.lokalita||'?'; if(!lokColor[k]) lokColor[k]=LOK[Object.keys(lokColor).length%LOK.length]; return lokColor[k]; }
+  const v=val(p); if(v==null) return '#9ca3af';
+  return ramp(max>min?(v-min)/(max-min):0.5);
+}
+function style(f,hi){ const p=f.properties; return {color:hi?'#111':'#fff',weight:hi?3:1.5,fillColor:f._c,fillOpacity:hi?.6:.45}; }
+
+function render(){
+  if(layer) map.removeLayer(layer);
+  const vals=feats.map(f=>val(f.properties)).filter(v=>v!=null);
+  const min=Math.min(...vals), max=Math.max(...vals);
+  feats.forEach(f=>f._c=colorOf(f.properties,min,max));
+  layer=L.geoJSON({type:'FeatureCollection',features:feats},{
+    style:f=>style(f,f.properties.id===sel),
+    onEachFeature:(f,l)=>{
+      const p=f.properties, t=[p.kod,p.nazov].filter(Boolean).join(' · ')||'?';
+      l.bindTooltip(`${t} · ${num(p.ha,2)} ha`,{permanent:true,direction:'center',className:'lbl'});
+      l.on('click',()=>select(p.id));
+    }}).addTo(map);
+  if(!sel && feats.length) map.fitBounds(layer.getBounds(),{padding:[20,20]});
+  // legenda
+  const lg=$('leg');
+  if(metric==='lok') lg.innerHTML=Object.entries(lokColor).map(([k,c])=>`<i style="background:${c}"></i>${k}`).join('<br>');
+  else if(vals.length) lg.innerHTML=`<i style="background:${ramp(0)}"></i>${num(min)} &nbsp; <i style="background:${ramp(1)}"></i>${num(max)} &nbsp; <i style="background:#9ca3af"></i>bez dát<br>${$('metric').selectedOptions[0].text.replace('farba: ','')}`;
+  else lg.innerHTML='';
+  renderList(); renderSum();
+}
+function renderList(){
+  const by=(a,b)=>(a.properties.kod||'zz').localeCompare(b.properties.kod||'zz',undefined,{numeric:true})||(a.properties.nazov||'').localeCompare(b.properties.nazov||'');
+  $('list').innerHTML=feats.slice().sort(by).map(f=>{const p=f.properties; const v=val(p);
+    return `<div class="row${p.id===sel?' on':''}" data-id="${p.id}"><span class="k">${p.kod?p.kod+' · ':''}${p.nazov||'bez názvu'}</span><span class="v">${num(p.ha,2)} ha</span><span class="s">${p.lokalita||''}${p.plodina?' · '+p.plodina:''}${p.hodinySezona!=null?' · '+num(p.hodinySezona,0)+' h':''}${p.poslednaPraca?' · '+p.poslednaPraca:''}</span></div>`;}).join('');
+  $('list').querySelectorAll('.row').forEach(r=>r.onclick=()=>select(r.dataset.id));
+}
+function renderSum(){
+  const ha=feats.reduce((s,f)=>s+(+f.properties.ha||0),0), h=feats.reduce((s,f)=>s+(+f.properties.hodinySezona||0),0), nk=feats.filter(f=>!f.properties.kod).length;
+  $('sum').textContent=`${feats.length} parciel · ${num(ha,2)} ha${h?' · '+num(h,0)+' h v sezóne':''}${nk?' · '+nk+' bez kódu':''}`;
+}
+function select(id){
+  sel=id; const f=feats.find(x=>x.properties.id===id); if(!f) return;
+  layer.eachLayer(l=>l.setStyle(style(l.feature,l.feature.properties.id===id)));
+  map.fitBounds(L.geoJSON(f).getBounds(),{padding:[40,40],maxZoom:17});
+  const p=f.properties, d=days(p.poslednaPraca);
+  const rows=[['Lokalita',p.lokalita],['Výmera',num(p.ha,2)+' ha'],['Plodina',p.plodina],['Sezóna',p.sezona],
+    ['Hodiny v sezóne',p.hodinySezona!=null?num(p.hodinySezona,0)+' h ('+num(p.hodinySezona/(p.ha||1))+' h/ha)':null],
+    ['Hodiny za 30 dní',p.hodiny30!=null?num(p.hodiny30,0)+' h':null],['Záznamov práce',p.zaznamov],
+    ['Posledná práca',p.poslednaPraca?p.poslednaPraca+(d!=null?' ('+d+' d)':'')+(p.poslednyDruh?' – '+p.poslednyDruh:''):null]]
+    .filter(r=>r[1]!=null&&r[1]!=='').map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+  $('det').innerHTML=`<h3>${p.kod?p.kod+' · ':''}${p.nazov||'bez názvu'}</h3><table>${rows}</table>${p.url?`<p><a href="${p.url}" target="_blank" rel="noopener">Otvoriť v Tabidoo ↗</a></p>`:''}`;
+  renderList();
+}
+$('metric').onchange=e=>{metric=e.target.value;render();};
+
+function load(data){
+  const fc=data&&Array.isArray(data.features)?data:DEFAULT;
+  feats=fc.features.filter(f=>f&&f.geometry).map((f,i)=>{
+    const g=f.geometry; if(g.type==='LineString'){const c=g.coordinates.slice();const a=c[0],b=c[c.length-1];if(a[0]!==b[0]||a[1]!==b[1])c.push(a);f={...f,geometry:{type:'Polygon',coordinates:[c]}};}
+    f.properties=Object.assign({id:'f'+i},f.properties||{}); return f; });
+  sel=null; render();
+}
+window.addEventListener('message',e=>{ if(e.data&&e.data.type==='parcely') load(e.data); });
+try{ const h=decodeURIComponent(location.hash.slice(1)); load(h?JSON.parse(h):null);}catch(e){ load(null); }
+</script>
+</body>
+</html>
